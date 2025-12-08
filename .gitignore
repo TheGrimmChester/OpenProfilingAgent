@@ -1,0 +1,51 @@
+# Vendor
+php-helper/vendor/
+dashboard/node_modules/
+dashboard/dist/
+
+# Build artifacts
+*.so
+*.o
+php-extension/modules/
+agent/myapm-agent
+dist/
+!dist/.gitkeep
+
+# Directories to ignore
+nginx/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test
+.phpunit.cache/
+coverage/
+
+# Docker
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs and core dumps (mounted from containers)
+logs/
+!logs/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI
+.cursor/
+CLAUDE.md
+.ai/
+.copilot/
+*.ai.md
+.github/copilot/
+
