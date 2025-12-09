@@ -60,7 +60,7 @@ jobs:
       - name: Pull or build agent image
         id: agent-image
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}/opa-agent:latest"
+          IMAGE="ghcr.io/thegrimmchester/opa-agent:latest"
           if docker pull "$IMAGE" 2>/dev/null; then
             echo "Successfully pulled $IMAGE"
             echo "image=$IMAGE" >> $GITHUB_OUTPUT
@@ -99,7 +99,7 @@ jobs:
       - name: Pull or build PHP extension image
         id: php-image
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}/opa-php-8.4:latest"
+          IMAGE="ghcr.io/thegrimmchester/opa-php-8.4:latest"
           if docker pull "$IMAGE" 2>/dev/null; then
             echo "Successfully pulled $IMAGE"
             docker tag "$IMAGE" opa-php-test:latest
