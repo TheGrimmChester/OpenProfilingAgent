@@ -12,10 +12,10 @@ OpenProfilingAgent provides comprehensive performance monitoring with minimal ov
 
 - **🌟 Live Dumps**: Real-time variable inspection and debugging with live dump capture during execution
 - **Automatic Instrumentation**: Zero-code monitoring of function calls, SQL queries, HTTP requests, and file I/O
-- **Low Overhead**: ~2-5% CPU overhead with 10% sampling
-- **High Performance**: Handles 10,000+ spans/second per agent
+- **Low Overhead**: Minimal performance impact with configurable sampling
+- **High Performance**: Efficient span processing and storage
 - **Self-Hosted**: Complete control over your data
-- **Multi-Language**: PHP (extension), Go, Python, Node.js SDKs
+- **PHP Support**: PHP extension with helper library
 - **Real-Time Dashboard**: Modern React-based UI for trace visualization
 - **Scalable**: Horizontal scaling with multiple agents
 
@@ -107,7 +107,6 @@ Helper Library                    ClickHouse
 - **[Installation Guide](docs/INSTALLATION.md)** - Detailed installation instructions
 - **[Technical Documentation](docs/TECHNICAL.md)** - Architecture, internals, and protocol
 - **[Features](docs/FEATURES.md)** - Complete feature list
-- **[SDKs](docs/sdks/README.md)** - Multi-language SDK documentation
 
 ## Configuration
 
@@ -211,20 +210,6 @@ $client->endSpan($span);
 
 - `GET /metrics` - Prometheus metrics
 
-## Performance
-
-### Overhead
-
-- **CPU**: ~2-5% with 10% sampling
-- **Memory**: ~50MB per PHP-FPM worker
-- **Network**: ~1KB per span (compressed)
-
-### Throughput
-
-- **Spans/sec**: 10,000+ (single agent)
-- **Latency**: <1ms (socket communication)
-- **Storage**: 1MB per 1000 spans (compressed)
-
 ## Deployment Considerations
 
 ### Recommended Settings
@@ -254,7 +239,6 @@ opa.buffer_size=131072
 - **Data Sanitization**: Remove sensitive data from spans
 - **Access Control**: Restrict agent API access
 - **Network Security**: Use TLS for ClickHouse in secure environments
-- **Authentication**: Enable auth for multi-tenant setups
 
 ## Troubleshooting
 
