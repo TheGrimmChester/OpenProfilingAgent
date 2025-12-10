@@ -22,9 +22,7 @@ services:
     restart: unless-stopped
 
   agent:
-    build: 
-      context: ./agent
-      dockerfile: Dockerfile
+    image: ghcr.io/thegrimmchester/opa-agent:latest
     container_name: opa-agent
     volumes:
       - opa_socket:/var/run
@@ -74,11 +72,7 @@ services:
     restart: unless-stopped
 
   dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
-      args:
-        - VITE_API_URL=
+    image: ghcr.io/thegrimmchester/opa-dashboard:latest
     container_name: opa-dashboard
     ports:
       - "3000:80"
@@ -92,23 +86,6 @@ services:
       - prod
     restart: unless-stopped
 
-  dashboard-dev:
-    image: node:18-alpine
-    container_name: opa-dashboard-dev
-    working_dir: /app
-    volumes:
-      - ./dashboard:/app
-      - /app/node_modules
-    ports:
-      - "3000:3000"
-    depends_on:
-      - agent
-    environment:
-      - VITE_API_URL=
-      - TZ=Europe/Paris
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
-    restart: unless-stopped
-
 volumes:
   clickhouse_data:
   prometheus_data:
@@ -116,4 +93,4 @@ volumes:
 
 networks:
   opa_network:
-    driver: bridge
+    external: true
