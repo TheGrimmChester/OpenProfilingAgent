@@ -72,6 +72,9 @@ services:
     restart: unless-stopped
 
   dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
     image: ghcr.io/thegrimmchester/opa-dashboard:latest
     container_name: opa-dashboard
     ports:
