@@ -55,10 +55,6 @@ Complete list of OpenProfilingAgent features and capabilities.
 ### Multi-Language Support
 
 - ✅ **PHP**: Full support (extension + helper)
-- ✅ **Go**: SDK available
-- ✅ **Python**: SDK available
-- ✅ **Node.js**: SDK available
-- ✅ **Protocol**: Standard JSON format
 
 ## Configuration Options
 
@@ -121,4 +117,3 @@ Complete list of OpenProfilingAgent features and capabilities.
 
 - See [User Guide](GUIDE.md) for usage examples
 - See [INTEGRATION.md](INTEGRATION.md) for SDK integration
-
