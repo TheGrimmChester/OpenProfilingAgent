@@ -47,8 +47,9 @@ cd OpenProfilingAgent
 # Copy environment configuration
 cp env.example .env
 
-# Build and start all services
-docker-compose up --build -d
+# Build and start all services (--no-cache ensures everything is updated)
+docker-compose build --no-cache
+docker-compose up -d
 
 # Check service status
 docker-compose ps
