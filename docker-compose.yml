@@ -22,10 +22,9 @@ services:
     restart: unless-stopped
 
   agent:
-    build:
+    build: 
       context: ./agent
       dockerfile: Dockerfile
-    image: opa-agent:local
     container_name: opa-agent
     volumes:
       - opa_socket:/var/run
@@ -41,6 +40,7 @@ services:
       - CLICKHOUSE_URL=http://clickhouse:8123
       - SOCKET_PATH=/var/run/opa.sock
       - TRANSPORT_TCP=:9090
+      - WS_PORT=${WS_PORT:-8082}
       - TZ=Europe/Paris
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
@@ -79,7 +79,8 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-    image: ghcr.io/thegrimmchester/opa-dashboard:latest
+      args:
+        - VITE_API_URL=
     container_name: opa-dashboard
     ports:
       - "3000:80"
@@ -93,6 +94,27 @@ services:
       - prod
     restart: unless-stopped
 
+  dashboard-dev:
+    image: node:18-alpine
+    container_name: opa-dashboard-dev
+    working_dir: /app
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      - agent
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_API_PROXY_TARGET=http://agent:8080
+      - VITE_WS_PORT=${VITE_WS_PORT:-8082}
+      - TZ=Europe/Paris
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    networks:
+      - opa_network
+    restart: unless-stopped
+
 volumes:
   clickhouse_data:
   prometheus_data:
@@ -100,4 +122,5 @@ volumes:
 
 networks:
   opa_network:
+    driver: bridge
     external: true

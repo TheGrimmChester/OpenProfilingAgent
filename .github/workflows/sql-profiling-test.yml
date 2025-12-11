@@ -1,0 +1,140 @@
+name: SQL Profiling Tests
+
+on:
+  push:
+    branches: [ main, master, develop, feature/sql-profiling ]
+    paths:
+      - 'php-extension/**'
+      - 'agent/**'
+      - 'test_sql_profiling.sh'
+      - '.github/workflows/sql-profiling-test.yml'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'php-extension/**'
+      - 'agent/**'
+      - 'test_sql_profiling.sh'
+      - '.github/workflows/sql-profiling-test.yml'
+  workflow_dispatch:
+
+jobs:
+  sql-profiling-test:
+    name: SQL Profiling End-to-End Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 8123:8123
+          - 9000:9000
+        env:
+          CLICKHOUSE_DB: default
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: ''
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Pull or build agent image
+        id: agent-image
+        run: |
+          IMAGE="ghcr.io/thegrimmchester/opa-agent:latest"
+          if docker pull "$IMAGE" 2>/dev/null; then
+            echo "Successfully pulled $IMAGE"
+            echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to pull $IMAGE, building locally..."
+            cd agent
+            docker build -t "$IMAGE" .
+            echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Start Agent
+        run: |
+          docker run -d \
+            --name opa-agent \
+            --network host \
+            -e CLICKHOUSE_HOST=localhost \
+            -e CLICKHOUSE_PORT=9000 \
+            -e CLICKHOUSE_DATABASE=default \
+            -e CLICKHOUSE_USER=default \
+            -e CLICKHOUSE_PASSWORD='' \
+            -e OPA_AGENT_PORT=8081 \
+            ${{ steps.agent-image.outputs.image }}
+      
+      - name: Wait for Agent
+        run: |
+          echo "Waiting for agent to be ready..."
+          for i in {1..30}; do
+            if docker logs opa-agent 2>&1 | grep -q "Server listening"; then
+              echo "Agent is ready"
+              break
+            fi
+            sleep 1
+          done
+          docker logs opa-agent
+      
+      - name: Pull or build PHP extension image
+        id: php-image
+        run: |
+          IMAGE="ghcr.io/thegrimmchester/opa-php-8.4:latest"
+          if docker pull "$IMAGE" 2>/dev/null; then
+            echo "Successfully pulled $IMAGE"
+            docker tag "$IMAGE" opa-php-test:latest
+            echo "image=opa-php-test:latest" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to pull $IMAGE, building locally..."
+            cd php-extension
+            docker build -t opa-php-test:latest --build-arg PHP_VERSION=8.4 .
+            echo "image=opa-php-test:latest" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run SQL Profiling Tests
+        env:
+          CI_MODE: 1
+          VERBOSE: 1
+          TEST_TIMEOUT: 120
+          WAIT_TIMEOUT: 45
+          API_URL: http://localhost:8081
+        run: |
+          chmod +x test_sql_profiling.sh
+          ./test_sql_profiling.sh --ci --verbose
+      
+      - name: Upload Test Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            /tmp/opa-tests/*.log
+          retention-days: 7
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop opa-agent || true
+          docker rm opa-agent || true
+          cd php-extension && docker-compose down || true
+

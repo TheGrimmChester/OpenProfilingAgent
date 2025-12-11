@@ -1,9 +1,11 @@
 [submodule "agent"]
 	path = agent
 	url = https://github.com/TheGrimmChester/OPA-Agent.git
+	branch = feature/sql-profiling
 [submodule "dashboard"]
 	path = dashboard
 	url = https://github.com/TheGrimmChester/OPA-Dashboard.git
+	branch = feature/sql-profiling
 [submodule "php-extension"]
 	path = php-extension
 	url = https://github.com/TheGrimmChester/OPA-PHP-extension.git
