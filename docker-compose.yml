@@ -22,7 +22,10 @@ services:
     restart: unless-stopped
 
   agent:
-    image: ghcr.io/thegrimmchester/opa-agent:latest
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    image: opa-agent:local
     container_name: opa-agent
     volumes:
       - opa_socket:/var/run
