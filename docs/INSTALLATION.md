@@ -253,9 +253,17 @@ opa.language_version=
 ; Framework metadata (optional)
 opa.framework=
 opa.framework_version=
+
+; Span expansion mode (1 = multiple spans from call stack, 0 = single span with nested call stack)
+; Default: 1 (multiple spans mode)
+opa.expand_spans=1
 ```
 
 **Note**: `opa.socket_path` supports both Unix sockets (e.g., `/var/run/opa.sock`) and TCP/IP (e.g., `agent:9090` or `127.0.0.1:9090`). Detection is automatic: paths starting with `/` are Unix sockets, otherwise TCP/IP.
+
+**Span Expansion Modes**:
+- `opa.expand_spans=1` (default): Call stack nodes are converted to separate child spans. This provides better trace visualization with multiple spans per request.
+- `opa.expand_spans=0`: Keeps the original behavior with a single span containing the full call stack nested inside. Useful for backward compatibility or when you prefer a simpler trace structure.
 
 ### Agent
 
