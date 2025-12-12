@@ -162,7 +162,11 @@ services:
       - ./symfony-app:/var/www/symfony
       - ./symfony-app/docker/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - opa_socket:/var/run
+      - ./symfony-app/var/core-dumps:/var/log/core-dumps
     working_dir: /var/www/symfony
+    ulimits:
+      core: -1
+    privileged: true
     depends_on:
       mysql-symfony:
         condition: service_healthy
@@ -179,11 +183,26 @@ services:
       - REDIS_URL=redis://redis-symfony:6379
       - APP_ENV=dev
       - APP_SECRET=dev_secret_key_change_in_production
-      # OPA Extension - disabled by default, enable via .env file
-      - OPA_ENABLED=${OPA_ENABLED:-0}
+      # OPA Extension - Full Featured Configuration
+      - OPA_ENABLED=${OPA_ENABLED:-1}
       - OPA_SOCKET_PATH=${OPA_SOCKET_PATH:-/var/run/opa.sock}
       - OPA_SAMPLING_RATE=${OPA_SAMPLING_RATE:-1.0}
-      - OPA_DEBUG_LOG=${OPA_DEBUG_LOG:-0}
+      - OPA_EXPAND_SPANS=${OPA_EXPAND_SPANS:-1}
+      - OPA_DEBUG_LOG=${OPA_DEBUG_LOG:-1}
+      - OPA_TRACK_ERRORS=${OPA_TRACK_ERRORS:-1}
+      - OPA_TRACK_LOGS=${OPA_TRACK_LOGS:-1}
+      - OPA_LOG_LEVELS=${OPA_LOG_LEVELS:-critical,error,warning,info,debug}
+      - OPA_COLLECT_INTERNAL_FUNCTIONS=${OPA_COLLECT_INTERNAL_FUNCTIONS:-1}
+      - OPA_FULL_CAPTURE_THRESHOLD_MS=${OPA_FULL_CAPTURE_THRESHOLD_MS:-100}
+      - OPA_STACK_DEPTH=${OPA_STACK_DEPTH:-50}
+      - OPA_BUFFER_SIZE=${OPA_BUFFER_SIZE:-131072}
+      - OPA_ORGANIZATION_ID=${OPA_ORGANIZATION_ID:-myapm-org}
+      - OPA_PROJECT_ID=${OPA_PROJECT_ID:-symfony-app}
+      - OPA_SERVICE=${OPA_SERVICE:-symfony-php}
+      - OPA_FRAMEWORK=${OPA_FRAMEWORK:-symfony}
+      - OPA_FRAMEWORK_VERSION=${OPA_FRAMEWORK_VERSION:-7.0}
+      - OPA_LANGUAGE_VERSION=${OPA_LANGUAGE_VERSION:-8.4}
+      - DEFAULT_URI=${DEFAULT_URI:-http://localhost:8080}
       - TZ=Europe/Paris
     networks:
       - opa_network
