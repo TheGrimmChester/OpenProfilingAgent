@@ -1,0 +1,81 @@
+{
+    "name": "myapm/symfony-test-app",
+    "type": "project",
+    "license": "MIT",
+    "description": "Symfony 7 test application for OpenProfilingAgent features",
+    "require": {
+        "php": ">=8.1",
+        "ext-ctype": "*",
+        "ext-iconv": "*",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "ext-redis": "*",
+        "ext-apcu": "*",
+        "ext-curl": "*",
+        "symfony/console": "7.0.*",
+        "symfony/dotenv": "7.0.*",
+        "symfony/flex": "^2",
+        "symfony/framework-bundle": "7.0.*",
+        "symfony/runtime": "7.0.*",
+        "symfony/yaml": "7.0.*",
+        "symfony/orm-pack": "*",
+        "doctrine/doctrine-bundle": "^2.11",
+        "doctrine/doctrine-migrations-bundle": "^3.3",
+        "doctrine/orm": "^2.18",
+        "symfony/cache": "^7.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0",
+        "symfony/debug-bundle": "7.0.*",
+        "symfony/maker-bundle": "^1.0",
+        "symfony/phpunit-bridge": "^7.0"
+    },
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "symfony/flex": true,
+            "symfony/runtime": true
+        },
+        "sort-packages": true,
+        "audit": {
+            "ignore": ["PKSA-d1rr-z8zb-qnm7", "PKSA-365x-2zjk-pt47", "PKSA-b35n-565h-rs4q"]
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "App\\Tests\\": "tests/"
+        }
+    },
+    "replace": {
+        "symfony/polyfill-ctype": "*",
+        "symfony/polyfill-iconv": "*"
+    },
+    "scripts": {
+        "auto-scripts": {
+            "cache:clear": "symfony-cmd"
+        },
+        "post-install-cmd": [
+            "@auto-scripts"
+        ],
+        "post-update-cmd": [
+            "@auto-scripts"
+        ]
+    },
+    "scripts-descriptions": {
+        "cache:clear": "Clear Symfony cache (only if bin/console exists)"
+    },
+    "conflict": {
+        "symfony/symfony": "*"
+    },
+    "extra": {
+        "symfony": {
+            "allow-contrib": false,
+            "require": "7.0.*"
+        }
+    }
+}

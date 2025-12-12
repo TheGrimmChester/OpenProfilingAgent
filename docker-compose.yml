@@ -115,10 +115,121 @@ services:
       - opa_network
     restart: unless-stopped
 
+  # Symfony App Services
+  mysql-symfony:
+    image: mysql:8.0
+    container_name: mysql-symfony
+    environment:
+      MYSQL_ROOT_PASSWORD: symfony_root_password
+      MYSQL_DATABASE: symfony_db
+      MYSQL_USER: symfony_user
+      MYSQL_PASSWORD: symfony_password
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_symfony_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psymfony_root_password"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - opa_network
+    restart: unless-stopped
+
+  redis-symfony:
+    image: redis:7-alpine
+    container_name: redis-symfony
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_symfony_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - opa_network
+    restart: unless-stopped
+
+  symfony-php:
+    build:
+      context: ./php-extension
+      dockerfile: docker/Dockerfile.test
+    container_name: symfony-php
+    volumes:
+      - ./symfony-app:/var/www/symfony
+      - ./symfony-app/docker/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - opa_socket:/var/run
+    working_dir: /var/www/symfony
+    depends_on:
+      mysql-symfony:
+        condition: service_healthy
+      redis-symfony:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=mysql://symfony_user:symfony_password@mysql-symfony:3306/symfony_db?serverVersion=8.0&charset=utf8mb4
+      - DATABASE_HOST=mysql-symfony
+      - DATABASE_NAME=symfony_db
+      - DATABASE_USER=symfony_user
+      - DATABASE_PASSWORD=symfony_password
+      - REDIS_URL=redis://redis-symfony:6379
+      - APP_ENV=dev
+      - APP_SECRET=dev_secret_key_change_in_production
+      # OPA Extension - disabled by default, enable via .env file
+      - OPA_ENABLED=${OPA_ENABLED:-0}
+      - OPA_SOCKET_PATH=${OPA_SOCKET_PATH:-/var/run/opa.sock}
+      - OPA_SAMPLING_RATE=${OPA_SAMPLING_RATE:-1.0}
+      - OPA_DEBUG_LOG=${OPA_DEBUG_LOG:-0}
+      - TZ=Europe/Paris
+    networks:
+      - opa_network
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    # Start PHP-FPM
+    command: ["php-fpm", "-F"]
+
+  symfony-nginx:
+    build:
+      context: ./symfony-app
+      dockerfile: docker/Dockerfile.nginx
+    container_name: symfony-nginx
+    volumes:
+      - ./symfony-app:/var/www/symfony:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - symfony-php
+    networks:
+      - opa_network
+    restart: unless-stopped
+
+  symfony-apache:
+    build:
+      context: ./symfony-app
+      dockerfile: docker/Dockerfile.apache
+    container_name: symfony-apache
+    volumes:
+      - ./symfony-app:/var/www/symfony:ro
+    ports:
+      - "8081:80"
+    depends_on:
+      - symfony-php
+    networks:
+      - opa_network
+    restart: unless-stopped
+    profiles:
+      - apache
+
 volumes:
   clickhouse_data:
   prometheus_data:
   opa_socket:
+  mysql_symfony_data:
+  redis_symfony_data:
 
 networks:
   opa_network:

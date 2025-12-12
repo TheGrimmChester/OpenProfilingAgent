@@ -1,0 +1,231 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, master, develop, feature/* ]
+    paths:
+      - 'php-extension/**'
+      - 'agent/**'
+      - 'tests/**'
+      - 'docker-compose.test.yml'
+      - 'run-tests.sh'
+      - '.github/workflows/e2e-tests.yml'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'php-extension/**'
+      - 'agent/**'
+      - 'tests/**'
+      - 'docker-compose.test.yml'
+      - 'run-tests.sh'
+      - '.github/workflows/e2e-tests.yml'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Specific test to run (optional, e.g., http_errors/test_http_errors_e2e.sh)'
+        required: false
+        type: string
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:23.3
+        ports:
+          - 9000:9000
+          - 8123:8123
+        options: >-
+          --health-cmd "wget --spider -q http://localhost:8123/ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        env:
+          TZ: Europe/Paris
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Create Docker network
+        run: docker network create opa_network || true
+      
+      - name: Build agent
+        id: build-agent
+        working-directory: agent
+        run: |
+          docker build --no-cache -t myapm-agent:latest .
+        continue-on-error: true
+      
+      - name: Use pre-built agent image (if build failed)
+        if: steps.build-agent.outcome == 'failure'
+        run: |
+          echo "Agent build failed, trying to use pre-built image"
+          docker pull ghcr.io/thegrimmchester/opa-agent:latest || docker pull ghcr.io/thegrimmchester/opa-agent:main || true
+          docker tag ghcr.io/thegrimmchester/opa-agent:latest myapm-agent:latest 2>/dev/null || \
+            docker tag ghcr.io/thegrimmchester/opa-agent:main myapm-agent:latest 2>/dev/null || true
+      
+      - name: Build PHP extension test image
+        working-directory: php-extension
+        run: |
+          docker build -f docker/Dockerfile.test -t php-extension-test:latest .
+      
+      - name: Setup test endpoint
+        run: |
+          mkdir -p tests/apps/symfony/public
+          cat > tests/apps/symfony/public/test_http_errors.php << 'EOF'
+          <?php
+          $status = isset($_GET['status']) ? (int)$_GET['status'] : 200;
+          if ($status < 100 || $status > 599) $status = 500;
+          http_response_code($status);
+          header("Content-Type: application/json");
+          echo json_encode([
+              "status" => $status,
+              "message" => "Test error response",
+              "timestamp" => time(),
+              "method" => $_SERVER["REQUEST_METHOD"] ?? "GET",
+              "uri" => $_SERVER["REQUEST_URI"] ?? "/",
+          ], JSON_PRETTY_PRINT);
+          EOF
+      
+      - name: Start test services
+        run: |
+          docker-compose -f docker-compose.test.yml up -d
+          sleep 20
+          # Wait for ClickHouse
+          for i in {1..60}; do
+            if docker exec clickhouse-test wget --spider -q http://localhost:8123/ping 2>/dev/null; then
+              echo "ClickHouse is ready"
+              break
+            fi
+            sleep 1
+          done
+          # Wait for Agent
+          for i in {1..60}; do
+            if docker exec opa-agent-test wget --spider -q http://localhost:8080/api/health 2>/dev/null; then
+              echo "Agent is ready"
+              break
+            fi
+            sleep 1
+          done
+          # Wait for MySQL
+          for i in {1..60}; do
+            if docker exec opa_mysql_test mysqladmin ping -h localhost -u root -proot_password > /dev/null 2>&1; then
+              echo "MySQL is ready"
+              break
+            fi
+            sleep 1
+          done
+          # Wait for PHP-FPM
+          for i in {1..60}; do
+            if docker exec opa_php_test pgrep -f php-fpm > /dev/null 2>&1; then
+              echo "PHP-FPM is ready"
+              break
+            fi
+            sleep 1
+          done
+          # Setup ClickHouse schema - ensure database and columns exist
+          docker exec clickhouse-test clickhouse-client --query "CREATE DATABASE IF NOT EXISTS opa" || true
+          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS language String DEFAULT 'php'" || true
+          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS language_version Nullable(String)" || true
+          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS framework Nullable(String)" || true
+          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS framework_version Nullable(String)" || true
+          # Setup test endpoint in container
+          docker exec opa_php_test bash -c 'mkdir -p /var/www/html/tests/apps/symfony/public && cat > /var/www/html/tests/apps/symfony/public/test_http_errors.php << "ENDOFFILE"
+          <?php
+          \$status = isset(\$_GET["status"]) ? (int)\$_GET["status"] : 200;
+          if (\$status < 100 || \$status > 599) \$status = 500;
+          http_response_code(\$status);
+          header("Content-Type: application/json");
+          echo json_encode([
+              "status" => \$status,
+              "message" => "Test error response",
+              "timestamp" => time(),
+              "method" => \$_SERVER["REQUEST_METHOD"] ?? "GET",
+              "uri" => \$_SERVER["REQUEST_URI"] ?? "/",
+          ], JSON_PRETTY_PRINT);
+          ENDOFFILE
+          ' || true
+      
+      - name: Run E2E tests
+        env:
+          API_URL: http://agent-test:8080
+          BASE_URL: http://nginx-test
+          MYSQL_HOST: mysql-test
+          MYSQL_PORT: 3306
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+          MYSQL_ROOT_PASSWORD: root_password
+          SERVICE_NAME: test-service
+          VERBOSE: 1
+        run: |
+          if [[ -n "${{ inputs.test_filter }}" ]]; then
+            # Run specific test
+            docker exec -i \
+              -e DOCKER_CONTAINER=1 \
+              -e API_URL=http://agent-test:8080 \
+              -e BASE_URL=http://nginx-test \
+              -e MYSQL_HOST=mysql-test \
+              -e MYSQL_PORT=3306 \
+              -e MYSQL_DATABASE=test_db \
+              -e MYSQL_USER=test_user \
+              -e MYSQL_PASSWORD=test_password \
+              -e MYSQL_ROOT_PASSWORD=root_password \
+              -e SERVICE_NAME=test-service \
+              -e VERBOSE=1 \
+              opa_php_test \
+              bash -c "cd /app/tests/e2e && bash ${{ inputs.test_filter }}"
+          else
+            # Run all E2E tests directly in container
+            docker exec opa_php_test bash -c 'cd /app/tests/e2e && 
+            TESTS_PASSED=0
+            TESTS_FAILED=0
+            for test in $(find . -name "*_e2e.sh" -type f | sort); do
+              echo "=========================================="
+              echo "Running: $test"
+              echo "=========================================="
+              test_dir=$(dirname "$test")
+              test_file=$(basename "$test")
+              cd "$test_dir"
+              if DOCKER_CONTAINER=1 API_URL=http://agent-test:8080 BASE_URL=http://nginx-test MYSQL_HOST=mysql-test MYSQL_PORT=3306 MYSQL_DATABASE=test_db MYSQL_USER=test_user MYSQL_PASSWORD=test_password MYSQL_ROOT_PASSWORD=root_password SERVICE_NAME=test-service VERBOSE=1 bash "$test_file"; then
+                echo "✓ Test passed: $test"
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+              else
+                echo "✗ Test failed: $test"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+              fi
+              cd /app/tests/e2e
+            done
+            echo ""
+            echo "=== Test Summary ==="
+            echo "Tests passed: $TESTS_PASSED"
+            echo "Tests failed: $TESTS_FAILED"
+            if [ $TESTS_FAILED -gt 0 ]; then
+              exit 1
+            fi'
+          fi
+      
+      - name: Show test logs on failure
+        if: failure()
+        run: |
+          echo "=== Agent logs ==="
+          docker logs opa-agent-test --tail 50 || true
+          echo "=== PHP test container logs ==="
+          docker logs opa_php_test --tail 50 || true
+          echo "=== ClickHouse logs ==="
+          docker logs clickhouse-test --tail 50 || true
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose -f docker-compose.test.yml down -v || true
+          docker network rm opa_network || true
+

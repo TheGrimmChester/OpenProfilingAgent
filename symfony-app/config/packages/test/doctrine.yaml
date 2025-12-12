@@ -1,0 +1,5 @@
+doctrine:
+    dbal:
+        # Use a separate database for tests
+        dbname_suffix: '_test'
+
