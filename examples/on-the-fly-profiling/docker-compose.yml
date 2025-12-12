@@ -1,0 +1,79 @@
+version: "3.8"
+
+# Standalone example for On-the-Fly Profiling
+#
+# This docker-compose file provides a complete example setup for
+# testing on-the-fly profiling with a PHP application.
+#
+# Usage:
+#   1. Ensure the main OpenProfilingAgent services are running:
+#      docker-compose -f ../docker-compose.yml up -d
+#
+#   2. Start this example:
+#      docker-compose up -d
+#
+#   3. Test the application:
+#      docker exec -it opa-example-php php /app/index.php
+#      docker exec -it opa-example-php OPA_ENABLE=1 php /app/cli-example.php
+
+services:
+  php-example:
+    build:
+      context: ../../php-extension
+      dockerfile: docker/Dockerfile
+    container_name: opa-example-php
+    volumes:
+      # Share Unix socket with agent (if using Unix socket transport)
+      - opa_socket:/var/run
+      # Mount example files
+      - ./index.php:/app/index.php:ro
+      - ./cli-example.php:/app/cli-example.php:ro
+    working_dir: /app
+    depends_on:
+      - agent
+    networks:
+      opa_network:
+        aliases:
+          - opa-agent
+    environment:
+      # ============================================
+      # ON-THE-FLY PROFILING CONFIGURATION
+      # ============================================
+      
+      # CRITICAL: Profiling is DISABLED by default
+      # Enable it dynamically via:
+      #   1. PHP functions: opa_enable()
+      #   2. CLI environment: OPA_ENABLE=1 php script.php
+      - OPA_ENABLED=0
+      
+      # Agent connection - use service name when in same Docker network
+      - OPA_SOCKET_PATH=agent:9090
+      
+      # Configuration for when profiling is enabled
+      - OPA_SAMPLING_RATE=1.0
+      - OPA_FULL_CAPTURE_THRESHOLD_MS=100
+      - OPA_STACK_DEPTH=20
+      - OPA_BUFFER_SIZE=65536
+      - OPA_COLLECT_INTERNAL_FUNCTIONS=1
+      - OPA_DEBUG_LOG=0
+      
+      # Service identifiers
+      - OPA_ORGANIZATION_ID=example-org
+      - OPA_PROJECT_ID=on-the-fly-example
+      - OPA_SERVICE=php-example
+      - OPA_LANGUAGE=php
+      - OPA_LANGUAGE_VERSION=8.4
+      
+      - TZ=Europe/Paris
+    # Keep container running for testing
+    command: tail -f /dev/null
+
+volumes:
+  opa_socket:
+    external: true
+
+networks:
+  opa_network:
+    external: true
+    name: opa_network
+

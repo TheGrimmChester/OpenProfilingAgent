@@ -1,0 +1,184 @@
+version: "3.8"
+
+# Example Docker Compose configuration for "On-the-Fly" Profiling
+#
+# This configuration demonstrates how to set up OpenProfilingAgent with
+# profiling disabled by default, enabling it dynamically via PHP functions
+# or CLI environment variables.
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.on-the-fly.yml up -d
+#
+# Or use this as a standalone example by including the base services.
+
+services:
+  # Base services from main docker-compose.yml
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.3
+    container_name: clickhouse
+    volumes:
+      - ./clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    environment:
+      - TZ=Europe/Paris
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opa_network
+    restart: unless-stopped
+
+  agent:
+    build: 
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: opa-agent
+    volumes:
+      - opa_socket:/var/run
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "2112:2112"
+      - "8081:8080"
+      - "8082:8082"
+      - "10090:9090"
+    environment:
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - SOCKET_PATH=/var/run/opa.sock
+      - TRANSPORT_TCP=:9090
+      - WS_PORT=${WS_PORT:-8082}
+      - TZ=Europe/Paris
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opa_network
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: opa-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    environment:
+      - TZ=Europe/Paris
+    depends_on:
+      - agent
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opa_network
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=
+    container_name: opa-dashboard
+    ports:
+      - "3000:80"
+    environment:
+      - TZ=Europe/Paris
+    depends_on:
+      - agent
+    networks:
+      - opa_network
+    profiles:
+      - prod
+    restart: unless-stopped
+
+  # Example PHP Application with On-the-Fly Profiling
+  # 
+  # Key Configuration:
+  #   - OPA_ENABLED=0: Profiling is DISABLED by default
+  #   - OPA_SOCKET_PATH: Configured to connect to agent
+  #   - Other settings remain configured for when profiling is enabled
+  #
+  # Profiling can be enabled in two ways:
+  #   1. Via PHP code: opa_enable() function
+  #   2. Via CLI: OPA_ENABLE=1 php script.php
+  php-app-example:
+    build:
+      context: ./php-extension
+      dockerfile: docker/Dockerfile
+    container_name: opa-php-app-example
+    volumes:
+      # Share Unix socket with agent (if using Unix socket transport)
+      - opa_socket:/var/run
+      # Mount your application code here
+      # - ./your-app:/var/www/html
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      opa_network:
+        aliases:
+          - opa-agent
+    environment:
+      # ============================================
+      # ON-THE-FLY PROFILING CONFIGURATION
+      # ============================================
+      
+      # CRITICAL: Profiling is DISABLED by default
+      # Enable it dynamically via PHP functions or CLI environment variable
+      - OPA_ENABLED=0
+      
+      # Agent connection - use service name when in same Docker network
+      # For Unix socket: /var/run/opa.sock (requires volume mount)
+      # For TCP: agent:9090 (service name resolution)
+      - OPA_SOCKET_PATH=agent:9090
+      
+      # These settings are configured but only apply when profiling is enabled
+      - OPA_SAMPLING_RATE=1.0
+      - OPA_FULL_CAPTURE_THRESHOLD_MS=100
+      - OPA_STACK_DEPTH=20
+      - OPA_BUFFER_SIZE=65536
+      - OPA_COLLECT_INTERNAL_FUNCTIONS=1
+      - OPA_DEBUG_LOG=0
+      
+      # Service identifiers
+      - OPA_ORGANIZATION_ID=my-org
+      - OPA_PROJECT_ID=example-app
+      - OPA_SERVICE=php-app-on-the-fly
+      - OPA_LANGUAGE=php
+      - OPA_LANGUAGE_VERSION=8.4
+      
+      # Framework metadata (optional)
+      # - OPA_FRAMEWORK=symfony
+      # - OPA_FRAMEWORK_VERSION=7.0
+      
+      - TZ=Europe/Paris
+    # Example command - replace with your application's entrypoint
+    # command: php-fpm
+    # Or for CLI testing:
+    # command: tail -f /dev/null  # Keep container running for testing
+
+volumes:
+  clickhouse_data:
+  prometheus_data:
+  opa_socket:
+
+networks:
+  opa_network:
+    driver: bridge
+    external: true
+

@@ -103,6 +103,7 @@ Helper Library                    ClickHouse
 
 ## Documentation
 
+- **[Docker Setup Guide](docs/DOCKER_SETUP.md)** - Step-by-step Docker setup and configuration
 - **[User Guide](docs/GUIDE.md)** - Complete guide to using OpenProfilingAgent
 - **[Installation Guide](docs/INSTALLATION.md)** - Detailed installation instructions
 - **[Technical Documentation](docs/TECHNICAL.md)** - Architecture, internals, and protocol
