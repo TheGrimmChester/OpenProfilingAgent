@@ -185,7 +185,7 @@ services:
     volumes:
       - ./tests:/var/www/html/tests:ro
       - ./php-extension/tests:/var/www/html/php-extension/tests:ro
-      - ./nginx/test-nginx.conf:/etc/nginx/conf.d/e2e.conf:ro
+      - ./nginx/test-nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "8090:80"
     networks:
@@ -204,7 +204,7 @@ services:
       - symfony-php
     volumes:
       - ./symfony-app:/var/www/symfony:rw
-      - ./nginx/symfony-test.conf:/etc/nginx/conf.d/symfony.conf:ro
+      - ./nginx/symfony-test.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "8091:80"
     networks:
