@@ -66,11 +66,17 @@ jobs:
       - name: Build PHP extension test image (Symfony container)
         working-directory: php-extension
         run: |
+          echo "Building PHP extension test image..."
+          pwd
+          ls -la docker/Dockerfile.test || echo "Dockerfile.test not found in docker/"
           docker build -f docker/Dockerfile.test -t php-extension-test:latest .
+          echo "✓ PHP extension test image built successfully"
       
       - name: Build all containers with docker-compose
         run: |
           echo "Building all containers defined in docker-compose.test.yml..."
+          pwd
+          ls -la docker-compose.test.yml || echo "docker-compose.test.yml not found"
           docker compose -f docker-compose.test.yml build --no-cache
           echo "✓ All containers built successfully"
       
