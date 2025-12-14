@@ -12,7 +12,9 @@ dist/
 !dist/.gitkeep
 
 # Directories to ignore
-nginx/
+nginx/*
+!nginx/test-nginx.conf
+!nginx/symfony-test.conf
 node_modules/
 
 # IDE
