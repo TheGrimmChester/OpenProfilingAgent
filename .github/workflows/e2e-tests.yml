@@ -68,6 +68,12 @@ jobs:
         run: |
           docker build -f docker/Dockerfile.test -t php-extension-test:latest .
       
+      - name: Build all containers with docker-compose
+        run: |
+          echo "Building all containers defined in docker-compose.test.yml..."
+          docker compose -f docker-compose.test.yml build --no-cache
+          echo "✓ All containers built successfully"
+      
       - name: Setup test endpoint
         run: |
           mkdir -p tests/apps/symfony/public
@@ -88,7 +94,9 @@ jobs:
       
       - name: Start test services
         run: |
+          echo "Starting all test services..."
           docker compose -f docker-compose.test.yml up -d
+          echo "Waiting for services to initialize..."
           sleep 20
           # Wait for ClickHouse
           for i in {1..60}; do
