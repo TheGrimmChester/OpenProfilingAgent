@@ -34,6 +34,16 @@ symfony-app/tests/
 symfony-app/test_*.sh
 symfony-app/run_all_tests.sh
 
+# E2E and Profiling CI
+.github/workflows/e2e-tests.yml
+.github/workflows/sql-profiling-test.yml
+.github/workflows/*e2e*.yml
+.github/workflows/*test*.yml
+.github/workflows/*profiling*.yml
+docker-compose.test.yml
+nginx/*test*.conf
+nginx/*symfony-test*.conf
+
 # Docker
 *.log
 
@@ -57,4 +67,7 @@ CLAUDE.md
 .copilot/
 *.ai.md
 .github/copilot/
+
+# Debug files
+debug/
 
