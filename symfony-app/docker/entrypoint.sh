@@ -1,16 +1,37 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "Starting Symfony application setup..."
 
 # Configure core dumps for debugging
 echo "Configuring core dumps..."
-echo "/var/log/core-dumps/core.%e.%p.%t" > /proc/sys/kernel/core_pattern 2>/dev/null || true
+# Set core pattern BEFORE any processes start (must be root/privileged)
+if [ -w /proc/sys/kernel/core_pattern ]; then
+    echo "/var/log/core-dumps/core.%e.%p.%t" > /proc/sys/kernel/core_pattern
+    echo "✓ Core pattern set: /var/log/core-dumps/core.%e.%p.%t"
+else
+    echo "⚠ Warning: Cannot set core_pattern (needs privileged mode)"
+fi
+
+# Set ulimit for current process
 ulimit -c unlimited || true
+
+# Create core dump directory with proper permissions
 mkdir -p /var/log/core-dumps
 chmod 777 /var/log/core-dumps || true
 chown -R www-data:www-data /var/log/core-dumps 2>/dev/null || true
-echo "rlimit_core = unlimited" >> /usr/local/etc/php-fpm.d/www.conf 2>/dev/null || true
+echo "✓ Core dump directory: /var/log/core-dumps"
+
+# Ensure rlimit_core is set in PHP-FPM config (only once, before [www] section)
+if ! grep -q "^rlimit_core = unlimited" /usr/local/etc/php-fpm.d/www.conf 2>/dev/null; then
+    # Remove any existing rlimit_core lines to avoid duplicates
+    sed -i '/^rlimit_core =/d' /usr/local/etc/php-fpm.d/www.conf 2>/dev/null || true
+    # Add it right after [www] section
+    sed -i '/^\[www\]/a rlimit_core = unlimited' /usr/local/etc/php-fpm.d/www.conf 2>/dev/null || true
+    echo "✓ PHP-FPM rlimit_core configured"
+else
+    echo "✓ PHP-FPM rlimit_core already configured"
+fi
 
 # Wait for MySQL
 if command -v mysqladmin &> /dev/null; then
@@ -29,6 +50,20 @@ if command -v redis-cli &> /dev/null; then
     done
     echo "Redis is ready!"
 fi
+
+# Create cache and log directories with proper permissions BEFORE any Symfony commands
+echo "Creating Symfony cache and log directories..."
+# Ensure we're in the right directory
+cd /var/www/symfony || { echo "Error: Cannot cd to /var/www/symfony"; exit 1; }
+# Create directories if they don't exist
+mkdir -p var/cache/test var/log 2>/dev/null || {
+    echo "Warning: Failed to create cache directories (may be read-only mount)"
+    # Try creating in a writable location as fallback
+    mkdir -p /tmp/symfony-cache/test /tmp/symfony-log 2>/dev/null || true
+}
+chmod -R 777 var 2>/dev/null || true
+chown -R www-data:www-data var 2>/dev/null || true
+echo "✓ Cache and log directories created"
 
 # Install Composer dependencies
 if [ ! -d "vendor" ] && [ -f "composer.json" ]; then
@@ -125,12 +160,24 @@ else
     sed -i 's/opa.enabled=1/opa.enabled=0/' /usr/local/etc/php/conf.d/opa.ini || true
 fi
 
-# Clear cache
+# Clear cache (ensure cache directory exists first)
 if [ -f "bin/console" ]; then
     echo "Clearing Symfony cache..."
-    php bin/console cache:clear --no-interaction || true
+    # Ensure cache directory exists before clearing
+    mkdir -p var/cache/test var/log 2>/dev/null || true
+    chmod -R 777 var 2>/dev/null || true
+    # Try to clear cache, but don't fail if it doesn't work
+    php bin/console cache:clear --no-interaction 2>&1 || {
+        echo "Warning: Cache clear failed (this is OK for test environment)"
+        # Ensure directories exist even if cache clear failed
+        mkdir -p var/cache/test var/log 2>/dev/null || true
+        chmod -R 777 var 2>/dev/null || true
+    }
 fi
 
 echo "Symfony application is ready!"
+
+# Execute the command passed to the entrypoint
+# The docker-compose command should keep the container running
 exec "$@"
 

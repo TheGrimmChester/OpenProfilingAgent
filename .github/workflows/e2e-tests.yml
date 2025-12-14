@@ -7,6 +7,7 @@ on:
       - 'php-extension/**'
       - 'agent/**'
       - 'tests/**'
+      - 'symfony-app/**'
       - 'docker-compose.test.yml'
       - 'run-tests.sh'
       - '.github/workflows/e2e-tests.yml'
@@ -16,6 +17,7 @@ on:
       - 'php-extension/**'
       - 'agent/**'
       - 'tests/**'
+      - 'symfony-app/**'
       - 'docker-compose.test.yml'
       - 'run-tests.sh'
       - '.github/workflows/e2e-tests.yml'
@@ -31,19 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
-    services:
-      clickhouse:
-        image: clickhouse/clickhouse-server:23.3
-        ports:
-          - 9000:9000
-          - 8123:8123
-        options: >-
-          --health-cmd "wget --spider -q http://localhost:8123/ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        env:
-          TZ: Europe/Paris
+    # Note: Services are managed via docker-compose.test.yml instead of GitHub Actions services
+    # to avoid port conflicts and allow full control over the test environment
     
     steps:
       - name: Checkout code
@@ -72,7 +63,7 @@ jobs:
           docker tag ghcr.io/thegrimmchester/opa-agent:latest myapm-agent:latest 2>/dev/null || \
             docker tag ghcr.io/thegrimmchester/opa-agent:main myapm-agent:latest 2>/dev/null || true
       
-      - name: Build PHP extension test image
+      - name: Build PHP extension test image (Symfony container)
         working-directory: php-extension
         run: |
           docker build -f docker/Dockerfile.test -t php-extension-test:latest .
@@ -97,7 +88,7 @@ jobs:
       
       - name: Start test services
         run: |
-          docker-compose -f docker-compose.test.yml up -d
+          docker compose -f docker-compose.test.yml up -d
           sleep 20
           # Wait for ClickHouse
           for i in {1..60}; do
@@ -123,40 +114,141 @@ jobs:
             fi
             sleep 1
           done
-          # Wait for PHP-FPM
+          # Wait for Symfony PHP-FPM container to be running
           for i in {1..60}; do
-            if docker exec opa_php_test pgrep -f php-fpm > /dev/null 2>&1; then
-              echo "PHP-FPM is ready"
+            if docker ps --format "{{.Names}}" | grep -q "^symfony-php-test$"; then
+              if docker exec symfony-php-test pgrep -f php-fpm > /dev/null 2>&1; then
+                echo "Symfony PHP-FPM is ready"
+                break
+              fi
+            fi
+            sleep 1
+          done
+          # Ensure container is still running
+          if ! docker ps --format "{{.Names}}" | grep -q "^symfony-php-test$"; then
+            echo "Warning: symfony-php-test container is not running, attempting to start..."
+            docker compose -f docker-compose.test.yml up -d symfony-php 2>&1 || true
+            sleep 5
+          fi
+          # Wait for Symfony MySQL
+          for i in {1..60}; do
+            if docker exec mysql-symfony-test mysqladmin ping -h localhost -u root -psymfony_root_password > /dev/null 2>&1; then
+              echo "Symfony MySQL is ready"
               break
             fi
             sleep 1
           done
-          # Setup ClickHouse schema - ensure database and columns exist
-          docker exec clickhouse-test clickhouse-client --query "CREATE DATABASE IF NOT EXISTS opa" || true
-          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS language String DEFAULT 'php'" || true
-          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS language_version Nullable(String)" || true
-          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS framework Nullable(String)" || true
-          docker exec clickhouse-test clickhouse-client --query "ALTER TABLE opa.spans_min ADD COLUMN IF NOT EXISTS framework_version Nullable(String)" || true
+          # Wait for Symfony Redis
+          for i in {1..60}; do
+            if docker exec redis-symfony-test redis-cli ping > /dev/null 2>&1; then
+              echo "Symfony Redis is ready"
+              break
+            fi
+            sleep 1
+          done
+          # Wait for Symfony Nginx
+          for i in {1..60}; do
+            if docker exec symfony-nginx-test wget --spider -q http://localhost/api/test/http/get 2>/dev/null; then
+              echo "Symfony Nginx is ready"
+              break
+            fi
+            sleep 1
+          done
+          # Setup ClickHouse schema - ensure database and tables exist
+          echo "Initializing ClickHouse database and schema..."
+          # Wait a bit more for ClickHouse to be fully ready
+          sleep 5
+          # ClickHouse doesn't auto-run init scripts like PostgreSQL/MySQL, so we must run them manually
+          echo "Running ClickHouse initialization scripts..."
+          docker exec clickhouse-test bash -c '
+            # Create database first (simplest approach)
+            echo "Creating database opa..."
+            clickhouse-client --query "CREATE DATABASE IF NOT EXISTS opa" 2>&1
+            # Verify database was created
+            if ! clickhouse-client --query "SHOW DATABASES" 2>/dev/null | grep -q "^opa$"; then
+              echo "ERROR: Failed to create database opa"
+              echo "Available databases:"
+              clickhouse-client --query "SHOW DATABASES" 2>&1 || true
+              exit 1
+            fi
+            echo "✓ Database opa created"
+            # Run initialization scripts in order (use --multiquery for scripts with multiple statements)
+            echo "Running 00_multi_tenant.sql..."
+            clickhouse-client --multiquery < /docker-entrypoint-initdb.d/00_multi_tenant.sql 2>&1 | grep -v "^$" || echo "Note: Some statements may have been skipped (IF NOT EXISTS)"
+            echo "Running 01_schema.sql..."
+            clickhouse-client --multiquery < /docker-entrypoint-initdb.d/01_schema.sql 2>&1 | grep -v "^$" || echo "Note: Some statements may have been skipped (IF NOT EXISTS)"
+            echo "Running 02_tables_full.sql..."
+            clickhouse-client --multiquery < /docker-entrypoint-initdb.d/02_tables_full.sql 2>&1 | grep -v "^$" || echo "Note: Some statements may have been skipped (IF NOT EXISTS)"
+            echo "Running 03_multi_lang_schema.sql..."
+            clickhouse-client --multiquery < /docker-entrypoint-initdb.d/03_multi_lang_schema.sql 2>&1 | grep -v "^$" || echo "Note: Some statements may have been skipped (IF NOT EXISTS)"
+            # Verify database and tables exist
+            echo "Verifying database and tables..."
+            if clickhouse-client --query "SHOW DATABASES" 2>/dev/null | grep -q "^opa$"; then
+              echo "✓ Database opa verified"
+              TABLES=$(clickhouse-client --query "SHOW TABLES FROM opa" 2>/dev/null || echo "")
+              if echo "$TABLES" | grep -q "spans_min"; then
+                echo "✓ Table spans_min verified"
+                echo "✓ ClickHouse initialization successful"
+                exit 0
+              else
+                echo "⚠ Table spans_min not found. Available tables: $TABLES"
+                echo "Attempting to create spans_min table directly..."
+                clickhouse-client --multiquery < /docker-entrypoint-initdb.d/01_schema.sql 2>&1 || true
+                # Check again
+                if clickhouse-client --query "SHOW TABLES FROM opa" 2>/dev/null | grep -q "spans_min"; then
+                  echo "✓ Table spans_min created successfully"
+                  exit 0
+                else
+                  echo "✗ Still unable to create spans_min table"
+                  exit 1
+                fi
+              fi
+            else
+              echo "✗ Database opa not found after initialization"
+              exit 1
+            fi
+          ' || {
+            echo "⚠ ClickHouse initialization had issues"
+            # Last resort: try to create database and basic table
+            echo "Attempting minimal initialization..."
+            docker exec clickhouse-test bash -c '
+              clickhouse-client --query "CREATE DATABASE IF NOT EXISTS opa" 2>&1
+              clickhouse-client --multiquery < /docker-entrypoint-initdb.d/01_schema.sql 2>&1 || true
+            ' || true
+          }
           # Setup test endpoint in container
-          docker exec opa_php_test bash -c 'mkdir -p /var/www/html/tests/apps/symfony/public && cat > /var/www/html/tests/apps/symfony/public/test_http_errors.php << "ENDOFFILE"
+          echo "Setting up test endpoint..."
+          docker exec symfony-php-test bash -c 'mkdir -p /var/www/html/tests/apps/symfony/public && cat > /var/www/html/tests/apps/symfony/public/test_http_errors.php << "ENDOFFILE"
           <?php
-          \$status = isset(\$_GET["status"]) ? (int)\$_GET["status"] : 200;
-          if (\$status < 100 || \$status > 599) \$status = 500;
-          http_response_code(\$status);
+          $status = isset($_GET["status"]) ? (int)$_GET["status"] : 200;
+          if ($status < 100 || $status > 599) $status = 500;
+          http_response_code($status);
           header("Content-Type: application/json");
           echo json_encode([
-              "status" => \$status,
+              "status" => $status,
               "message" => "Test error response",
               "timestamp" => time(),
-              "method" => \$_SERVER["REQUEST_METHOD"] ?? "GET",
-              "uri" => \$_SERVER["REQUEST_URI"] ?? "/",
+              "method" => $_SERVER["REQUEST_METHOD"] ?? "GET",
+              "uri" => $_SERVER["REQUEST_URI"] ?? "/",
           ], JSON_PRETTY_PRINT);
           ENDOFFILE
           ' || true
+          # Verify symfony-php-test container is running before proceeding
+          if ! docker ps --format "{{.Names}}" | grep -q "^symfony-php-test$"; then
+            echo "Error: symfony-php-test container is not running!"
+            docker ps -a | grep symfony-php-test || true
+            docker logs symfony-php-test --tail 50 || true
+            echo "Attempting to restart container..."
+            docker compose -f docker-compose.test.yml up -d symfony-php 2>&1 || true
+            sleep 10
+          fi
+          # Install Symfony dependencies (cache directory is created in entrypoint.sh)
+          echo "Installing Symfony dependencies..."
+          docker exec symfony-php-test bash -c 'cd /var/www/symfony && if [ -f composer.json ] && [ ! -d vendor ]; then php -n /usr/local/bin/composer install --no-interaction --optimize-autoloader --no-dev || true; fi' || true
       
       - name: Run E2E tests
         env:
-          API_URL: http://agent-test:8080
+          API_URL: http://agent:8080
           BASE_URL: http://nginx-test
           MYSQL_HOST: mysql-test
           MYSQL_PORT: 3306
@@ -167,11 +259,28 @@ jobs:
           SERVICE_NAME: test-service
           VERBOSE: 1
         run: |
+          # Ensure symfony-php-test container is running before tests
+          echo "Checking symfony-php-test container status..."
+          if ! docker ps --format "{{.Names}}" | grep -q "^symfony-php-test$"; then
+            echo "Warning: symfony-php-test container is not running, attempting to start..."
+            docker compose -f docker-compose.test.yml up -d symfony-php 2>&1 || true
+            sleep 10
+            # Verify it's running
+            if ! docker ps --format "{{.Names}}" | grep -q "^symfony-php-test$"; then
+              echo "Error: Failed to start symfony-php-test container"
+              docker ps -a | grep symfony || true
+              docker logs symfony-php-test --tail 50 2>&1 || true
+              exit 1
+            fi
+            echo "✓ symfony-php-test container is now running"
+          else
+            echo "✓ symfony-php-test container is running"
+          fi
           if [[ -n "${{ inputs.test_filter }}" ]]; then
             # Run specific test
             docker exec -i \
               -e DOCKER_CONTAINER=1 \
-              -e API_URL=http://agent-test:8080 \
+              -e API_URL=http://agent:8080 \
               -e BASE_URL=http://nginx-test \
               -e MYSQL_HOST=mysql-test \
               -e MYSQL_PORT=3306 \
@@ -181,11 +290,11 @@ jobs:
               -e MYSQL_ROOT_PASSWORD=root_password \
               -e SERVICE_NAME=test-service \
               -e VERBOSE=1 \
-              opa_php_test \
+              symfony-php-test \
               bash -c "cd /app/tests/e2e && bash ${{ inputs.test_filter }}"
           else
             # Run all E2E tests directly in container
-            docker exec opa_php_test bash -c 'cd /app/tests/e2e && 
+            docker exec symfony-php-test bash -c 'cd /app/tests/e2e && 
             TESTS_PASSED=0
             TESTS_FAILED=0
             for test in $(find . -name "*_e2e.sh" -type f | sort); do
@@ -195,7 +304,7 @@ jobs:
               test_dir=$(dirname "$test")
               test_file=$(basename "$test")
               cd "$test_dir"
-              if DOCKER_CONTAINER=1 API_URL=http://agent-test:8080 BASE_URL=http://nginx-test MYSQL_HOST=mysql-test MYSQL_PORT=3306 MYSQL_DATABASE=test_db MYSQL_USER=test_user MYSQL_PASSWORD=test_password MYSQL_ROOT_PASSWORD=root_password SERVICE_NAME=test-service VERBOSE=1 bash "$test_file"; then
+              if DOCKER_CONTAINER=1 API_URL=http://agent:8080 BASE_URL=http://nginx-test MYSQL_HOST=mysql-test MYSQL_PORT=3306 MYSQL_DATABASE=test_db MYSQL_USER=test_user MYSQL_PASSWORD=test_password MYSQL_ROOT_PASSWORD=root_password SERVICE_NAME=test-service VERBOSE=1 bash "$test_file"; then
                 echo "✓ Test passed: $test"
                 TESTS_PASSED=$((TESTS_PASSED + 1))
               else
@@ -213,19 +322,30 @@ jobs:
             fi'
           fi
       
+      - name: Run Symfony tests
+        env:
+          BASE_URL: http://symfony-nginx
+        run: |
+          echo "=========================================="
+          echo "Running Symfony Tests"
+          echo "=========================================="
+          docker exec symfony-php-test bash -c 'cd /var/www/symfony && bash run_all_tests.sh'
+      
       - name: Show test logs on failure
         if: failure()
         run: |
           echo "=== Agent logs ==="
           docker logs opa-agent-test --tail 50 || true
-          echo "=== PHP test container logs ==="
-          docker logs opa_php_test --tail 50 || true
+          echo "=== Symfony PHP test container logs ==="
+          docker logs symfony-php-test --tail 50 || true
+          echo "=== Symfony Nginx logs ==="
+          docker logs symfony-nginx-test --tail 50 || true
           echo "=== ClickHouse logs ==="
           docker logs clickhouse-test --tail 50 || true
       
       - name: Cleanup
         if: always()
         run: |
-          docker-compose -f docker-compose.test.yml down -v || true
+          docker compose -f docker-compose.test.yml down -v || true
           docker network rm opa_network || true
 

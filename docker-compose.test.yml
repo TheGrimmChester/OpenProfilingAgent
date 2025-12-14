@@ -45,8 +45,12 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - opa_network
+      opa_network:
+        aliases:
+          - agent
+          - opa-agent-test
 
+  # MySQL for E2E tests (keep existing)
   mysql-test:
     image: mysql:8.0
     container_name: opa_mysql_test
@@ -67,27 +71,68 @@ services:
     networks:
       - opa_network
 
-  php-test:
+  # MySQL for Symfony tests
+  mysql-symfony:
+    image: mysql:8.0
+    container_name: mysql-symfony-test
+    environment:
+      MYSQL_ROOT_PASSWORD: symfony_root_password
+      MYSQL_DATABASE: symfony_db
+      MYSQL_USER: symfony_user
+      MYSQL_PASSWORD: symfony_password
+    volumes:
+      - mysql_symfony_test_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psymfony_root_password"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - opa_network
+
+  # Redis for Symfony tests
+  redis-symfony:
+    image: redis:7-alpine
+    container_name: redis-symfony-test
+    volumes:
+      - redis_symfony_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - opa_network
+
+  # Symfony PHP container (replaces php-test, runs both E2E and Symfony tests)
+  symfony-php:
     build:
       context: ./php-extension
       dockerfile: docker/Dockerfile.test
-    container_name: opa_php_test
+    container_name: symfony-php-test
     volumes:
       - ./php-extension:/usr/src/opa:ro
       - ./php-extension/tests:/app/tests:ro
       - ./tests:/var/www/html/tests:ro
+      - ./symfony-app:/var/www/symfony:rw
+      - ./symfony-app/docker/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
       - test_endpoints:/var/www/html/tests/apps:rw
       - opa_socket_test:/var/run
-    working_dir: /app/tests
+    working_dir: /var/www/symfony
+    ulimits:
+      core: -1
     depends_on:
       - agent
       - mysql-test
+      - mysql-symfony
+      - redis-symfony
     networks:
       opa_network:
         aliases:
           - opa-agent
           - php-fpm
           - php-test
+          - symfony-php
     environment:
       - DOCKER_CONTAINER=1
       - API_URL=http://agent:8080
@@ -98,21 +143,45 @@ services:
       - MYSQL_USER=test_user
       - MYSQL_PASSWORD=test_password
       - MYSQL_ROOT_PASSWORD=root_password
+      # Symfony database configuration
+      - DATABASE_URL=mysql://symfony_user:symfony_password@mysql-symfony:3306/symfony_db?serverVersion=8.0&charset=utf8mb4
+      - DATABASE_HOST=mysql-symfony
+      - DATABASE_NAME=symfony_db
+      - DATABASE_USER=symfony_user
+      - DATABASE_PASSWORD=symfony_password
+      - REDIS_URL=redis://redis-symfony:6379
+      - APP_ENV=test
+      - APP_SECRET=test_secret_key
+      # OPA Extension Configuration
       - OPA_ENABLED=1
-      - OPA_SOCKET_PATH=agent:9090
+      - OPA_SOCKET_PATH=/var/run/opa.sock
       - OPA_SAMPLING_RATE=1.0
+      - OPA_EXPAND_SPANS=1
       - OPA_DEBUG_LOG=1
+      - OPA_TRACK_ERRORS=1
+      - OPA_TRACK_LOGS=1
+      - OPA_LOG_LEVELS=critical,error,warning,info,debug
+      - OPA_COLLECT_INTERNAL_FUNCTIONS=1
+      - OPA_FULL_CAPTURE_THRESHOLD_MS=100
+      - OPA_STACK_DEPTH=50
+      - OPA_BUFFER_SIZE=131072
       - OPA_ORGANIZATION_ID=default-org
       - OPA_PROJECT_ID=default-project
+      - OPA_SERVICE=symfony-php-test
+      - OPA_FRAMEWORK=symfony
+      - OPA_FRAMEWORK_VERSION=7.0
+      - OPA_LANGUAGE_VERSION=8.4
       - TZ=Europe/Paris
     # Start PHP-FPM in background and keep container running
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
     command: bash -c "php-fpm -D && tail -f /dev/null"
 
+  # Nginx for E2E tests (existing)
   nginx-test:
     image: nginx:alpine
     container_name: opa_nginx_test
     depends_on:
-      - php-test
+      - symfony-php
     volumes:
       - ./tests:/var/www/html/tests:ro
       - ./php-extension/tests:/var/www/html/php-extension/tests:ro
@@ -127,9 +196,30 @@ services:
       timeout: 1s
       retries: 5
 
+  # Nginx for Symfony tests
+  symfony-nginx:
+    image: nginx:alpine
+    container_name: symfony-nginx-test
+    depends_on:
+      - symfony-php
+    volumes:
+      - ./symfony-app:/var/www/symfony:rw
+      - ./nginx/symfony-test.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8091:80"
+    networks:
+      - opa_network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/api/test/http/get"]
+      interval: 2s
+      timeout: 1s
+      retries: 5
+
 volumes:
   clickhouse_test_data:
   mysql_test_data:
+  mysql_symfony_test_data:
+  redis_symfony_test_data:
   opa_socket_test:
   test_endpoints:
 
