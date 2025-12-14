@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS opa.spans_full (
   redis String DEFAULT '',
   stack String DEFAULT '',
   tags String DEFAULT '',
-  dumps String DEFAULT ''
+  dumps String DEFAULT '',
+  created_at DateTime64(3) DEFAULT now()
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(start_ts)
 ORDER BY (organization_id, project_id, service, trace_id, start_ts);

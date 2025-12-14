@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS opa.spans_min (
   http_requests_count UInt16 DEFAULT 0,
   cache_operations_count UInt16 DEFAULT 0,
   redis_operations_count UInt16 DEFAULT 0,
-  cache_hit_rate Float32 DEFAULT 0
+  cache_hit_rate Float32 DEFAULT 0,
+  created_at DateTime64(3) DEFAULT now()
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(start_ts)
 ORDER BY (organization_id, project_id, service, start_ts);
