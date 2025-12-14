@@ -26,6 +26,13 @@ node_modules/
 # Test
 .phpunit.cache/
 coverage/
+tests/
+test_*.sh
+run-tests.sh
+README_TESTS.md
+symfony-app/tests/
+symfony-app/test_*.sh
+symfony-app/run_all_tests.sh
 
 # Docker
 *.log
