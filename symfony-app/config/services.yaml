@@ -20,5 +20,10 @@ services:
             - '../src/Entity/'
             - '../src/Kernel.php'
 
+    # Explicitly register W3C Trace Context Listener to ensure it's called
+    App\EventListener\W3CTraceContextListener:
+        tags:
+            - { name: kernel.event_subscriber }
+
     # add more service definitions when explicit configuration is needed
     # please note that last definitions always *replace* previous ones

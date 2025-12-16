@@ -28,6 +28,15 @@ class PDOProfilingTestController extends AbstractController
     #[Route('/api/test/pdo/simple', name: 'test_pdo_simple', methods: ['GET'])]
     public function testSimpleQuery(Request $request): JsonResponse
     {
+        // Set W3C Trace Context if headers are present
+        if (function_exists('opa_set_w3c_context')) {
+            $traceparent = $request->headers->get('traceparent');
+            $tracestate = $request->headers->get('tracestate');
+            if ($traceparent) {
+                opa_set_w3c_context($traceparent, $tracestate);
+            }
+        }
+        
         $results = [
             'status' => 'success',
             'timestamp' => date('Y-m-d H:i:s'),
