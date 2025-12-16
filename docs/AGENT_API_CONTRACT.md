@@ -376,6 +376,8 @@ Span messages represent performance traces of application execution. They contai
 | `chunk_seq` | integer (nullable) | Chunk sequence number |
 | `chunk_done` | boolean (nullable) | Whether this is the last chunk |
 | `raw` | object | Additional raw data |
+| `w3c_traceparent` | string (nullable) | W3C Trace Context traceparent header value |
+| `w3c_tracestate` | string (nullable) | W3C Trace Context tracestate header value |
 
 ### Field Details
 
@@ -1185,11 +1187,91 @@ echo '{"type":"span","trace_id":"test","span_id":"test","service":"test","name":
 echo '{"type":"span","trace_id":"test","span_id":"test","service":"test","name":"test","start_ts":1704067200000,"end_ts":1704067201000,"duration_ms":1000,"status":"ok"}' | nc localhost 9090
 ```
 
+## W3C Trace Context Support
+
+OpenProfilingAgent supports the W3C Trace Context standard for distributed tracing across services. This enables correlation of traces when requests span multiple services.
+
+### Traceparent Header
+
+The `traceparent` header follows the W3C Trace Context format:
+
+```
+traceparent: 00-<32-hex-trace-id>-<16-hex-parent-id>-<2-hex-flags>
+```
+
+**Format Details:**
+- **Version**: `00` (current version)
+- **Trace ID**: 32 hexadecimal characters (16 bytes) - globally unique trace identifier
+- **Parent ID**: 16 hexadecimal characters (8 bytes) - parent span identifier
+- **Flags**: 2 hexadecimal characters (1 byte) - bit 0 indicates sampling (01 = sampled, 00 = not sampled)
+
+**Example:**
+```
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+```
+
+### Tracestate Header
+
+The `tracestate` header contains vendor-specific key-value pairs for additional context:
+
+```
+tracestate: vendor1=value1,vendor2=value2
+```
+
+**Format Details:**
+- Comma-separated list of key-value pairs
+- Each pair: `key=value`
+- Keys and values may contain specific characters (see W3C spec)
+- OpenProfilingAgent propagates existing tracestate values
+
+### Header Parsing
+
+When a request includes `traceparent` and/or `tracestate` headers:
+
+1. **Incoming Requests**: The PHP extension parses these headers in `RINIT`:
+   - Extracts trace ID and parent ID from `traceparent`
+   - Uses W3C trace ID as the root span trace ID (converted from 32 hex to 16 hex)
+   - Uses W3C parent ID as the root span parent ID
+   - Stores `tracestate` for propagation
+
+2. **Outgoing Requests**: The PHP extension generates W3C headers for outgoing HTTP requests:
+   - Generates `traceparent` using current trace ID and span ID
+   - Propagates existing `tracestate` if present
+   - Injects headers into cURL requests automatically
+
+### Span Message Fields
+
+When W3C headers are present, the following optional fields are populated in span messages:
+
+- `w3c_traceparent` (string, optional): Original traceparent header value
+- `w3c_tracestate` (string, optional): Original tracestate header value
+
+These fields enable cross-service trace correlation and are stored with the span data.
+
+### Example
+
+**Incoming Request with W3C Headers:**
+```
+GET /api/users HTTP/1.1
+Host: api.example.com
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+tracestate: vendor=value
+```
+
+**Outgoing Request (automatically includes W3C headers):**
+```
+GET /external-api/data HTTP/1.1
+Host: external.example.com
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-<new-span-id>-01
+tracestate: vendor=value
+```
+
 ## References
 
 - [RFC 7159 - JSON Specification](https://tools.ietf.org/html/rfc7159)
 - [RFC 2119 - Key words for use in RFCs](https://tools.ietf.org/html/rfc2119)
 - [LZ4 Compression](https://github.com/lz4/lz4)
+- [W3C Trace Context Specification](https://www.w3.org/TR/trace-context/)
 - [OpenProfilingAgent Technical Documentation](TECHNICAL.md)
 - [OpenProfilingAgent Installation Guide](INSTALLATION.md)
 
